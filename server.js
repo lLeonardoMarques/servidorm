@@ -1347,6 +1347,54 @@ app.get(
   })
 );
 
+
+﻿// ======================================
+// ANPRICE - TESTE DE USER PRODUCT
+// ======================================
+
+app.get(
+  "/api/ml/user-product/teste",
+  exigirAdmin,
+  rotaSegura(async (req, res) => {
+    const id =
+      typeof req.query.id === "string"
+        ? req.query.id.trim().toUpperCase()
+        : "";
+
+    if (!/^MLBU\d+$/.test(id)) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: "Informe um ID MLBU valido"
+      });
+    }
+
+    const resultado = await mlGet(
+      `/user-products/${id}`
+    );
+
+    if (!resultado.ok) {
+      return res.status(resultado.status).json({
+        sucesso: false,
+        recurso: "User Product",
+        id,
+        httpMercadoLivre: resultado.status,
+        erro: resultado.dados?.error ?? null,
+        mensagem: resultado.dados?.message ?? null,
+        retryAfter: resultado.retryAfter
+      });
+    }
+
+    return res.json({
+      sucesso: true,
+      recurso: "User Product",
+      id,
+      httpMercadoLivre: resultado.status,
+      dados: resultado.dados
+    });
+  })
+);
+
+
 // ======================================
 // ROTA NAO ENCONTRADA
 // ======================================
