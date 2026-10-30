@@ -904,6 +904,115 @@ app.get("/api/ml/meus-anuncios", exigirAdmin, async (req, res) => {
 });
 
 
+﻿// ======================================
+// DETALHES DOS MEUS ANUNCIOS
+// ======================================
+
+app.get("/api/ml/anuncios/detalhes", exigirAdmin, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+
+  try {
+    const token = await obterAccessToken();
+
+    // Buscar IDs de anuncios da conta conectada
+    const usuario = await consultarUsuario(token);
+
+    const busca = await fetch(
+      `https://api.mercadolibre.com/users/${usuario.id}/items/search?limit=10`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        },
+        signal: AbortSignal.timeout(15000)
+      }
+    );
+
+    if (!busca.ok) {
+      return res.status(502).json({
+        sucesso: false,
+        etapa: "listar_anuncios",
+        httpMercadoLivre: busca.status
+      });
+    }
+
+    const listagem = await busca.json();
+    const ids = Array.isArray(listagem.results)
+      ? listagem.results.filter(
+          id => /^MLB\d+$/.test(id)
+        ).slice(0, 10)
+      : [];
+
+    if (ids.length === 0) {
+      return res.json({
+        sucesso: true,
+        total: 0,
+        anuncios: []
+      });
+    }
+
+    // Consultar os anuncios em lote
+    const url = new URL(
+      "https://api.mercadolibre.com/items/bulk"
+    );
+
+    url.searchParams.set("ids", ids.join(","));
+
+    const resposta = await fetch(url, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+
+    const dados = await resposta.json();
+
+    if (!resposta.ok) {
+      return res.status(502).json({
+        sucesso: false,
+        etapa: "detalhes_anuncios",
+        httpMercadoLivre: resposta.status,
+        erro: dados.error ?? null
+      });
+    }
+
+    const itens = Array.isArray(dados) ? dados : [];
+
+    return res.json({
+      sucesso: true,
+      total: itens.length,
+      anuncios: itens.map(resultado => {
+        const item = resultado.body || {};
+
+        return {
+          id: resultado.id || item.id || null,
+          httpStatus: resultado.status_code ?? null,
+          titulo: item.title ?? null,
+          precoReferencia: item.price ?? null,
+          moeda: item.currency_id ?? null,
+          vendedorId: item.seller_id ?? null,
+          status: item.status ?? null,
+          quantidadeDisponivel:
+            item.available_quantity ?? null,
+          link: item.permalink ?? null,
+          imagem: item.thumbnail ?? null
+        };
+      })
+    });
+
+  } catch (erro) {
+    console.error("Detalhes de anuncios:", erro.name);
+
+    return res.status(502).json({
+      sucesso: false,
+      erro: "Falha ao consultar detalhes dos anuncios"
+    });
+  }
+});
+
+
+
 // ======================================
 // ROTA INEXISTENTE
 // ======================================
