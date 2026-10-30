@@ -1090,6 +1090,321 @@ app.get("/api/ml/catalogo/produto", exigirAdmin, async (req, res) => {
 });
 
 
+﻿// ======================================
+// ANPRICE - TOP 20 MAIS VENDIDOS
+// CELULARES E SMARTPHONES
+// ======================================
+
+app.get(
+  "/api/ml/mais-vendidos",
+  exigirAdmin,
+  async (req, res) => {
+    res.set("Cache-Control", "no-store");
+
+    const categoria = "MLB1055";
+    const nomeCategoria = "Celulares e Smartphones";
+
+    try {
+      const token = await obterAccessToken();
+
+      const url = new URL(
+        `https://api.mercadolibre.com/highlights/MLB/category/${categoria}`
+      );
+
+      const resposta = await fetch(url.toString(), {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        },
+        signal: AbortSignal.timeout(15000)
+      });
+
+      const texto = await resposta.text();
+
+      let dados;
+
+      try {
+        dados = JSON.parse(texto);
+      } catch {
+        dados = {
+          mensagem: texto.slice(0, 500)
+        };
+      }
+
+      if (!resposta.ok) {
+        return res.status(resposta.status).json({
+          sucesso: false,
+          sistema: "AnPrice",
+          recurso: "Ranking de mais vendidos",
+          categoria,
+          nomeCategoria,
+          httpMercadoLivre: resposta.status,
+          erro: {
+            codigo: dados.error ?? null,
+            mensagem:
+              dados.message ??
+              dados.mensagem ??
+              "Consulta nao autorizada ou indisponivel"
+          },
+          retryAfter:
+            resposta.headers.get("retry-after")
+        });
+      }
+
+      if (!Array.isArray(dados.content)) {
+        return res.status(502).json({
+          sucesso: false,
+          erro: "Formato inesperado de ranking",
+          httpMercadoLivre: resposta.status
+        });
+      }
+
+      const ranking = dados.content
+        .slice(0, 20)
+        .map((entrada) => ({
+          posicao: entrada.position ?? null,
+          id: entrada.id ?? null,
+          tipo: entrada.type ?? null
+        }))
+        .sort(
+          (a, b) =>
+            (a.posicao ?? 999) -
+            (b.posicao ?? 999)
+        );
+
+      return res.json({
+        sucesso: true,
+        sistema: "AnPrice",
+        recurso: "Top 20 mais vendidos",
+        pais: "Brasil",
+        site: "MLB",
+        categoria,
+        nomeCategoria,
+        totalRetornado: ranking.length,
+        atualizadoEm: new Date().toISOString(),
+        criterios: dados.query_data ?? null,
+        ranking
+      });
+
+    } catch (erro) {
+      console.error("Erro no ranking:", {
+        nome: erro.name,
+        mensagem: erro.message
+      });
+
+      return res.status(502).json({
+        sucesso: false,
+        sistema: "AnPrice",
+        erro: "Falha de comunicacao ao consultar ranking"
+      });
+    }
+  }
+);
+
+
+﻿// ======================================
+// ANPRICE - LISTAR CATEGORIAS E NICHOS
+// ======================================
+
+app.get(
+  "/api/ml/categorias",
+  exigirAdmin,
+  async (req, res) => {
+    res.set("Cache-Control", "no-store");
+
+    const categoriaPai =
+      typeof req.query.pai === "string"
+        ? req.query.pai.trim().toUpperCase()
+        : "";
+
+    if (
+      categoriaPai &&
+      !/^MLB\d+$/.test(categoriaPai)
+    ) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: "ID de categoria invalido"
+      });
+    }
+
+    try {
+      const token = await obterAccessToken();
+
+      const endpoint = categoriaPai
+        ? `https://api.mercadolibre.com/categories/${categoriaPai}`
+        : "https://api.mercadolibre.com/sites/MLB/categories";
+
+      const resposta = await fetch(endpoint, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        },
+        signal: AbortSignal.timeout(15000)
+      });
+
+      const texto = await resposta.text();
+      let dados;
+
+      try {
+        dados = JSON.parse(texto);
+      } catch {
+        dados = {};
+      }
+
+      if (!resposta.ok) {
+        return res.status(resposta.status).json({
+          sucesso: false,
+          httpMercadoLivre: resposta.status,
+          erro: dados.message ?? dados.error ?? null
+        });
+      }
+
+      const categorias = categoriaPai
+        ? dados.children_categories
+        : dados;
+
+      if (!Array.isArray(categorias)) {
+        return res.status(502).json({
+          sucesso: false,
+          erro: "Formato inesperado de categorias"
+        });
+      }
+
+      return res.json({
+        sucesso: true,
+        sistema: "AnPrice",
+        categoriaPai: categoriaPai || null,
+        nomeCategoriaPai:
+          categoriaPai ? dados.name ?? null : null,
+        categoriaFinal:
+          categoriaPai
+            ? categorias.length === 0
+            : false,
+        total: categorias.length,
+        categorias: categorias.map(item => ({
+          id: item.id,
+          nome: item.name
+        }))
+      });
+
+    } catch (erro) {
+      console.error("Categorias:", erro.name);
+
+      return res.status(502).json({
+        sucesso: false,
+        erro: "Falha ao consultar categorias"
+      });
+    }
+  }
+);
+
+
+// ======================================
+// ANPRICE - TOP 20 POR QUALQUER NICHO
+// ======================================
+
+app.get(
+  "/api/ml/mais-vendidos",
+  exigirAdmin,
+  async (req, res) => {
+    res.set("Cache-Control", "no-store");
+
+    const categoria =
+      typeof req.query.categoria === "string"
+        ? req.query.categoria.trim().toUpperCase()
+        : "";
+
+    if (!/^MLB\d+$/.test(categoria)) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: "Informe categoria=MLB seguido de numeros"
+      });
+    }
+
+    try {
+      const token = await obterAccessToken();
+
+      const url = new URL(
+        `https://api.mercadolibre.com/highlights/MLB/category/${categoria}`
+      );
+
+      const resposta = await fetch(url.toString(), {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        },
+        signal: AbortSignal.timeout(15000)
+      });
+
+      const texto = await resposta.text();
+
+      let dados;
+
+      try {
+        dados = JSON.parse(texto);
+      } catch {
+        dados = {
+          message: texto.slice(0, 300)
+        };
+      }
+
+      if (!resposta.ok) {
+        return res.status(resposta.status).json({
+          sucesso: false,
+          sistema: "AnPrice",
+          categoria,
+          httpMercadoLivre: resposta.status,
+          erro: dados.message ?? dados.error ?? null,
+          retryAfter:
+            resposta.headers.get("retry-after")
+        });
+      }
+
+      if (!Array.isArray(dados.content)) {
+        return res.status(502).json({
+          sucesso: false,
+          erro: "Formato inesperado do ranking"
+        });
+      }
+
+      const ranking = dados.content
+        .slice(0, 20)
+        .map(item => ({
+          posicao: item.position ?? null,
+          id: item.id ?? null,
+          tipo: item.type ?? null
+        }))
+        .sort(
+          (a, b) =>
+            (a.posicao ?? 999) -
+            (b.posicao ?? 999)
+        );
+
+      return res.json({
+        sucesso: true,
+        sistema: "AnPrice",
+        recurso: "Mais vendidos por nicho",
+        pais: "Brasil",
+        categoria,
+        totalRetornado: ranking.length,
+        consultadoEm: new Date().toISOString(),
+        criterios: dados.query_data ?? null,
+        ranking
+      });
+
+    } catch (erro) {
+      console.error("Mais vendidos:", erro.name);
+
+      return res.status(502).json({
+        sucesso: false,
+        erro: "Falha ao consultar ranking"
+      });
+    }
+  }
+);
+
+
 
 
 // ======================================
