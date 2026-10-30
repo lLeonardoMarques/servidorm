@@ -1,50 +1,115 @@
 
 const express = require("express");
 const crypto = require("node:crypto");
-const { verificarMongoDB } = require("./database");
+const { conectarMongoDB, verificarMongoDB } = require("./database");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Configuracoes Mercado Livre
 const CLIENT_ID = process.env.ML_CLIENT_ID;
 const CLIENT_SECRET = process.env.ML_CLIENT_SECRET;
 const REDIRECT_URI = process.env.ML_REDIRECT_URI;
 const OAUTH_KEY = process.env.ML_OAUTH_KEY;
+const TOKEN_KEY = process.env.ML_TOKEN_KEY;
+
+const ADMIN_USER = process.env.ADMIN_USER;
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+
+const COOKIE = "ml_oauth";
+const TOKEN_ID = "primary";
 
 app.disable("x-powered-by");
-app.use(express.json());
+app.use(express.json({ limit: "32kb" }));
 
-// ========================================
-// CONFIGURACAO DO MERCADO LIVRE
-// ========================================
+// =====================================
+// CONFIGURACOES E SEGURANCA
+// =====================================
+
+function chaveValida(chave) {
+  return typeof chave === "string" &&
+    /^[a-f0-9]{64}$/i.test(chave);
+}
 
 function configurado() {
   return Boolean(
     CLIENT_ID &&
     CLIENT_SECRET &&
     REDIRECT_URI &&
-    OAUTH_KEY &&
-    /^[a-f0-9]{64}$/i.test(OAUTH_KEY)
+    chaveValida(OAUTH_KEY) &&
+    chaveValida(TOKEN_KEY) &&
+    ADMIN_USER &&
+    ADMIN_PASSWORD
   );
 }
 
-// ========================================
-// CRIPTOGRAFIA DA SESSAO OAUTH
-// ========================================
+function compararSeguro(a, b) {
+  const hashA = crypto.createHash("sha256")
+    .update(String(a)).digest();
 
-function criarSessao(data) {
+  const hashB = crypto.createHash("sha256")
+    .update(String(b)).digest();
+
+  return crypto.timingSafeEqual(hashA, hashB);
+}
+
+// Autenticacao administrativa via HTTP Basic
+function exigirAdmin(req, res, next) {
+  res.set("Cache-Control", "no-store");
+
+  if (!ADMIN_USER || !ADMIN_PASSWORD) {
+    return res.status(503).json({
+      erro: "Administrador nao configurado"
+    });
+  }
+
+  const header = req.headers.authorization || "";
+
+  if (header.startsWith("Basic ")) {
+    try {
+      const texto = Buffer.from(
+        header.slice(6), "base64"
+      ).toString("utf8");
+
+      const separador = texto.indexOf(":");
+
+      if (separador !== -1) {
+        const usuario = texto.slice(0, separador);
+        const senha = texto.slice(separador + 1);
+
+        if (
+          compararSeguro(usuario, ADMIN_USER) &&
+          compararSeguro(senha, ADMIN_PASSWORD)
+        ) {
+          return next();
+        }
+      }
+    } catch {
+      // Credencial invalida
+    }
+  }
+
+  res.set("WWW-Authenticate", 'Basic realm="Servidor M"');
+
+  return res.status(401).json({
+    erro: "Acesso administrativo nao autorizado"
+  });
+}
+
+// =====================================
+// CRIPTOGRAFIA AES-256-GCM
+// =====================================
+
+function criptografar(dados, chaveHex) {
   const iv = crypto.randomBytes(12);
-  const chave = Buffer.from(OAUTH_KEY, "hex");
 
   const cifra = crypto.createCipheriv(
     "aes-256-gcm",
-    chave,
+    Buffer.from(chaveHex, "hex"),
     iv
   );
 
   const conteudo = Buffer.concat([
-    cifra.update(JSON.stringify(data), "utf8"),
+    cifra.update(JSON.stringify(dados), "utf8"),
     cifra.final()
   ]);
 
@@ -55,20 +120,20 @@ function criarSessao(data) {
   ]).toString("base64url");
 }
 
-function lerSessao(token) {
+function descriptografar(token, chaveHex) {
   const buffer = Buffer.from(token, "base64url");
 
   if (buffer.length < 29) {
-    throw new Error("Sessao invalida");
+    throw new Error("Dados criptografados invalidos");
   }
 
   const iv = buffer.subarray(0, 12);
   const tag = buffer.subarray(12, 28);
-  const dados = buffer.subarray(28);
+  const conteudo = buffer.subarray(28);
 
   const decifra = crypto.createDecipheriv(
     "aes-256-gcm",
-    Buffer.from(OAUTH_KEY, "hex"),
+    Buffer.from(chaveHex, "hex"),
     iv
   );
 
@@ -76,31 +141,29 @@ function lerSessao(token) {
 
   return JSON.parse(
     Buffer.concat([
-      decifra.update(dados),
+      decifra.update(conteudo),
       decifra.final()
     ]).toString("utf8")
   );
 }
 
-// ========================================
-// CONTROLE DE COOKIES
-// ========================================
+// =====================================
+// COOKIES DO OAUTH
+// =====================================
 
 function lerCookie(req, nome) {
   const cookies = (req.headers.cookie || "").split(";");
 
   for (const cookie of cookies) {
-    const [chave, ...partes] = cookie.trim().split("=");
+    const [chave, ...valor] = cookie.trim().split("=");
 
     if (chave === nome) {
-      return partes.join("=");
+      return valor.join("=");
     }
   }
 
   return null;
 }
-
-const COOKIE = "ml_oauth";
 
 function limparCookie(res) {
   res.clearCookie(COOKIE, {
@@ -111,52 +174,192 @@ function limparCookie(res) {
   });
 }
 
-// ========================================
-// ROTA PRINCIPAL
-// ========================================
+// =====================================
+// MONGODB - COLECAO DE TOKENS
+// =====================================
+
+async function colecaoTokens() {
+  const db = await conectarMongoDB();
+  return db.collection("ml_tokens");
+}
+
+function prepararTokens(dados) {
+  if (!dados.access_token || !dados.refresh_token) {
+    throw new Error("Tokens incompletos");
+  }
+
+  return {
+    access_token: dados.access_token,
+    refresh_token: dados.refresh_token,
+    user_id: dados.user_id,
+    expires_at: Date.now() +
+      Number(dados.expires_in || 21600) * 1000
+  };
+}
+
+async function salvarTokens(tokens) {
+  const colecao = await colecaoTokens();
+
+  const conteudo = criptografar(tokens, TOKEN_KEY);
+
+  await colecao.updateOne(
+    { _id: TOKEN_ID },
+    {
+      $set: {
+        conteudo,
+        usuarioId: tokens.user_id,
+        atualizadoEm: new Date()
+      }
+    },
+    { upsert: true }
+  );
+}
+
+async function carregarTokens() {
+  const colecao = await colecaoTokens();
+
+  const documento = await colecao.findOne({
+    _id: TOKEN_ID
+  });
+
+  if (!documento) {
+    return null;
+  }
+
+  return descriptografar(
+    documento.conteudo,
+    TOKEN_KEY
+  );
+}
+
+// =====================================
+// REQUISICOES MERCADO LIVRE
+// =====================================
+
+async function solicitarToken(parametros) {
+  const resposta = await fetch(
+    "https://api.mercadolibre.com/oauth/token",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Accept: "application/json"
+      },
+      body: new URLSearchParams(parametros),
+      signal: AbortSignal.timeout(15000)
+    }
+  );
+
+  if (!resposta.ok) {
+    const erro = new Error("Falha no OAuth Mercado Livre");
+    erro.statusMercadoLivre = resposta.status;
+    throw erro;
+  }
+
+  return resposta.json();
+}
+
+async function consultarUsuario(accessToken) {
+  const resposta = await fetch(
+    "https://api.mercadolibre.com/users/me",
+    {
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(15000)
+    }
+  );
+
+  if (!resposta.ok) {
+    const erro = new Error("Falha na consulta de usuario");
+    erro.statusMercadoLivre = resposta.status;
+    throw erro;
+  }
+
+  return resposta.json();
+}
+
+// Evita renovacoes simultaneas dentro
+// desta instancia do Node.js.
+let renovacaoPendente = null;
+
+async function renovarTokens() {
+  const atuais = await carregarTokens();
+
+  if (!atuais || !atuais.refresh_token) {
+    throw new Error("Conta nao conectada");
+  }
+
+  const resposta = await solicitarToken({
+    grant_type: "refresh_token",
+    client_id: CLIENT_ID,
+    client_secret: CLIENT_SECRET,
+    refresh_token: atuais.refresh_token
+  });
+
+  const novos = prepararTokens(resposta);
+
+  // Salvar imediatamente o novo refresh token.
+  await salvarTokens(novos);
+
+  return novos;
+}
+
+async function obterAccessToken(forcarRenovacao = false) {
+  if (!configurado()) {
+    throw new Error("Configuracao incompleta");
+  }
+
+  const tokens = await carregarTokens();
+
+  if (!tokens) {
+    throw new Error("Conta nao conectada");
+  }
+
+  const margem = 120000;
+
+  if (
+    !forcarRenovacao &&
+    tokens.expires_at > Date.now() + margem
+  ) {
+    return tokens.access_token;
+  }
+
+  if (!renovacaoPendente) {
+    renovacaoPendente = renovarTokens()
+      .finally(() => {
+        renovacaoPendente = null;
+      });
+  }
+
+  const novos = await renovacaoPendente;
+
+  return novos.access_token;
+}
+
+// =====================================
+// ROTAS PUBLICAS DE SAUDE
+// =====================================
 
 app.get("/", (req, res) => {
   res.json({
     projeto: "Servidor M",
-    sistema: "AnPrice - Mercado Livre",
-    versao: "1.2.0",
+    versao: "1.3.0",
     status: "online"
   });
 });
 
-// ========================================
-// STATUS GERAL DO SERVIDOR
-// ========================================
-
 app.get("/api/status", (req, res) => {
   res.json({
     servidor: "online",
-    mercadoLivre: "OAuth disponivel",
-    mongodb: "rota de diagnostico disponivel",
-    versao: "1.2.0",
+    versao: "1.3.0",
     timestamp: new Date().toISOString()
   });
 });
 
-// ========================================
-// STATUS DE CONFIGURACAO MERCADO LIVRE
-// ========================================
-
-app.get("/api/ml/status", (req, res) => {
-  res.json({
-    configurado: configurado(),
-    oauth: "PKCE",
-    tokenPersistente: false
-  });
-});
-
-// ========================================
-// STATUS DO MONGODB ATLAS
-// ========================================
-
-app.get("/api/db/status", async (req, res) => {
-  res.set("Cache-Control", "no-store");
-
+// Diagnostico protegido
+app.get("/api/db/status", exigirAdmin, async (req, res) => {
   try {
     await verificarMongoDB();
 
@@ -165,35 +368,63 @@ app.get("/api/db/status", async (req, res) => {
       banco: "MongoDB Atlas",
       conexao: "online"
     });
-
   } catch (erro) {
-    console.error(
-      "Falha na verificacao MongoDB:",
-      erro.name
-    );
+    console.error("MongoDB:", {
+      nome: erro.name,
+      codigo: erro.code ?? null,
+      codigoMongo: erro.codeName ?? null
+    });
 
     return res.status(503).json({
       sucesso: false,
-      banco: "MongoDB Atlas",
       conexao: "indisponivel"
     });
   }
 });
 
-// ========================================
-// INICIAR AUTORIZACAO MERCADO LIVRE
-// ========================================
+// =====================================
+// STATUS MERCADO LIVRE
+// =====================================
 
-app.get("/api/ml/auth", (req, res) => {
+app.get("/api/ml/status", exigirAdmin, async (req, res) => {
   if (!configurado()) {
     return res.status(503).json({
-      erro: "Configuracao OAuth incompleta"
+      configurado: false
     });
   }
 
-  // Gerar PKCE
-  const verifier = crypto
-    .randomBytes(32)
+  try {
+    const tokens = await carregarTokens();
+
+    return res.json({
+      configurado: true,
+      conectado: Boolean(tokens),
+      usuarioId: tokens ? tokens.user_id : null,
+      tokenValidoAte: tokens
+        ? new Date(tokens.expires_at).toISOString()
+        : null,
+      armazenamento: "MongoDB Atlas criptografado"
+    });
+
+  } catch {
+    return res.status(503).json({
+      erro: "Nao foi possivel consultar a conexao"
+    });
+  }
+});
+
+// =====================================
+// INICIAR OAUTH COM PKCE
+// =====================================
+
+app.get("/api/ml/auth", exigirAdmin, (req, res) => {
+  if (!configurado()) {
+    return res.status(503).json({
+      erro: "Configuracao incompleta"
+    });
+  }
+
+  const verifier = crypto.randomBytes(32)
     .toString("base64url");
 
   const challenge = crypto
@@ -201,16 +432,14 @@ app.get("/api/ml/auth", (req, res) => {
     .update(verifier)
     .digest("base64url");
 
-  // Protecao contra CSRF
-  const state = crypto
-    .randomBytes(24)
+  const state = crypto.randomBytes(24)
     .toString("hex");
 
-  const sessao = criarSessao({
+  const sessao = criptografar({
     verifier,
     state,
     criadoEm: Date.now()
-  });
+  }, OAUTH_KEY);
 
   res.cookie(COOKIE, sessao, {
     httpOnly: true,
@@ -234,40 +463,38 @@ app.get("/api/ml/auth", (req, res) => {
   return res.redirect(url.toString());
 });
 
-// ========================================
-// CALLBACK MERCADO LIVRE
-// ========================================
+// =====================================
+// CALLBACK OAUTH
+// =====================================
 
 app.get("/api/ml/callback", async (req, res) => {
   res.set("Cache-Control", "no-store");
 
-  const tokenSessao = lerCookie(req, COOKIE);
-
+  const cookie = lerCookie(req, COOKIE);
   limparCookie(res);
 
-  if (!configurado() || !tokenSessao) {
+  if (!configurado() || !cookie) {
     return res.status(400).json({
-      erro: "Sessao OAuth ausente ou configuracao incompleta"
+      erro: "Sessao OAuth ausente"
     });
   }
 
   let sessao;
 
   try {
-    sessao = lerSessao(tokenSessao);
+    sessao = descriptografar(cookie, OAUTH_KEY);
 
     const agora = Date.now();
 
     if (
-      !sessao.criadoEm ||
+      typeof sessao.criadoEm !== "number" ||
       agora - sessao.criadoEm > 600000 ||
       sessao.criadoEm > agora ||
       typeof req.query.state !== "string" ||
-      req.query.state !== sessao.state
+      !compararSeguro(req.query.state, sessao.state)
     ) {
-      throw new Error("Estado invalido ou expirado");
+      throw new Error("Sessao invalida");
     }
-
   } catch {
     return res.status(400).json({
       erro: "Sessao OAuth invalida ou expirada"
@@ -276,19 +503,18 @@ app.get("/api/ml/callback", async (req, res) => {
 
   if (req.query.error) {
     return res.status(400).json({
-      erro: "Autorizacao recusada pelo Mercado Livre"
+      erro: "Autorizacao recusada"
     });
   }
 
   if (typeof req.query.code !== "string") {
     return res.status(400).json({
-      erro: "Codigo de autorizacao ausente"
+      erro: "Codigo OAuth ausente"
     });
   }
 
   try {
-    // Trocar codigo por Access Token
-    const params = new URLSearchParams({
+    const resposta = await solicitarToken({
       grant_type: "authorization_code",
       client_id: CLIENT_ID,
       client_secret: CLIENT_SECRET,
@@ -297,94 +523,98 @@ app.get("/api/ml/callback", async (req, res) => {
       code_verifier: sessao.verifier
     });
 
-    const resposta = await fetch(
-      "https://api.mercadolibre.com/oauth/token",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/x-www-form-urlencoded",
-          Accept: "application/json"
-        },
-        body: params,
-        signal: AbortSignal.timeout(15000)
-      }
+    const tokens = prepararTokens(resposta);
+
+    const usuario = await consultarUsuario(
+      tokens.access_token
     );
 
-    if (!resposta.ok) {
-      return res.status(502).json({
-        erro: "Falha na troca do codigo por token",
-        httpMercadoLivre: resposta.status
-      });
+    // Verificar identidade antes de persistir.
+    if (
+      String(usuario.id) !== String(tokens.user_id)
+    ) {
+      throw new Error("Identidade OAuth divergente");
     }
 
-    const dados = await resposta.json();
-
-    if (!dados.access_token) {
-      return res.status(502).json({
-        erro: "Mercado Livre nao retornou access_token"
-      });
-    }
-
-    // Consultar a conta autenticada
-    const usuarioResposta = await fetch(
-      "https://api.mercadolibre.com/users/me",
-      {
-        headers: {
-          Authorization: `Bearer ${dados.access_token}`
-        },
-        signal: AbortSignal.timeout(15000)
-      }
-    );
-
-    if (!usuarioResposta.ok) {
-      return res.status(502).json({
-        erro: "Token recebido, mas consulta da conta falhou",
-        httpMercadoLivre: usuarioResposta.status
-      });
-    }
-
-    const usuario = await usuarioResposta.json();
-
-    // Nesta versao, os tokens nao sao salvos.
-    // Vamos implementar persistencia criptografada
-    // no MongoDB na proxima etapa.
+    await salvarTokens(tokens);
 
     return res.json({
       sucesso: true,
-      mensagem: "Mercado Livre autenticado com sucesso!",
+      mensagem: "Mercado Livre conectado!",
       usuario: {
         id: usuario.id,
         nickname: usuario.nickname
       },
-      armazenamento: "Tokens descartados apos o teste",
-      banco: "MongoDB Atlas preparado"
+      armazenamento: "MongoDB Atlas criptografado"
     });
 
   } catch (erro) {
-    console.error(
-      "Falha na autenticacao Mercado Livre:",
-      erro.name
-    );
+    console.error("OAuth Mercado Livre:", {
+      nome: erro.name,
+      httpMercadoLivre: erro.statusMercadoLivre || null
+    });
 
     return res.status(502).json({
-      erro: "Falha de comunicacao com Mercado Livre"
+      erro: "Falha na autenticacao ou persistencia",
+      httpMercadoLivre: erro.statusMercadoLivre || null
     });
   }
 });
 
-// ========================================
-// ROTA NAO ENCONTRADA
-// ========================================
+// =====================================
+// CONSULTAR CONTA COM TOKEN SALVO
+// =====================================
+
+app.get("/api/ml/me", exigirAdmin, async (req, res) => {
+  try {
+    let token = await obterAccessToken();
+
+    let usuario;
+
+    try {
+      usuario = await consultarUsuario(token);
+    } catch (erro) {
+      if (erro.statusMercadoLivre !== 401) {
+        throw erro;
+      }
+
+      token = await obterAccessToken(true);
+      usuario = await consultarUsuario(token);
+    }
+
+    return res.json({
+      sucesso: true,
+      usuario: {
+        id: usuario.id,
+        nickname: usuario.nickname,
+        site_id: usuario.site_id,
+        seller_reputation: usuario.seller_reputation
+      }
+    });
+
+  } catch (erro) {
+    console.error("Consulta Mercado Livre:", {
+      nome: erro.name,
+      httpMercadoLivre: erro.statusMercadoLivre || null
+    });
+
+    return res.status(502).json({
+      sucesso: false,
+      erro: "Falha ao consultar conta",
+      httpMercadoLivre: erro.statusMercadoLivre || null
+    });
+  }
+});
+
+// =====================================
+// TRATAMENTO DE ERROS
+// =====================================
 
 app.use((req, res) => {
   res.status(404).json({
     erro: "Rota nao encontrada"
   });
 });
-
-// ========================================
-// INICIAR SERVIDOR
-// ========================================
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(`Servidor M iniciado na porta ${PORT}`);
