@@ -1012,6 +1012,85 @@ app.get("/api/ml/anuncios/detalhes", exigirAdmin, async (req, res) => {
 });
 
 
+﻿// ======================================
+// TESTE DE PRODUTO DE CATALOGO
+// ======================================
+
+app.get("/api/ml/catalogo/produto", exigirAdmin, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+
+  const productId =
+    typeof req.query.id === "string"
+      ? req.query.id.trim()
+      : "";
+
+  if (!/^MLB\d+$/.test(productId)) {
+    return res.status(400).json({
+      sucesso: false,
+      erro: "Informe um ID de produto de catalogo valido"
+    });
+  }
+
+  try {
+    const token = await obterAccessToken();
+
+    const resposta = await fetch(
+      `https://api.mercadolibre.com/products/${productId}`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          Accept: "application/json"
+        },
+        signal: AbortSignal.timeout(15000)
+      }
+    );
+
+    const dados = await resposta.json();
+
+    if (!resposta.ok) {
+      return res.status(resposta.status).json({
+        sucesso: false,
+        httpMercadoLivre: resposta.status,
+        erro: dados.message || dados.error || null,
+        retryAfter: resposta.headers.get("retry-after")
+      });
+    }
+
+    const vencedor = dados.buy_box_winner;
+
+    return res.json({
+      sucesso: true,
+      produto: {
+        id: dados.id,
+        nome: dados.name,
+        status: dados.status,
+        dominio: dados.domain_id,
+        link: dados.permalink,
+        imagem: dados.pictures?.[0]?.url ?? null
+      },
+      ofertaVencedora: vencedor
+        ? {
+            anuncioId: vencedor.item_id,
+            vendedorId: vencedor.seller_id,
+            preco: vencedor.price,
+            moeda: vencedor.currency_id,
+            reputacao: vencedor.seller?.reputation_level_id ?? null,
+            freteGratis: vencedor.shipping?.free_shipping ?? null
+          }
+        : null,
+      faixaPrecos: dados.buy_box_winner_price_range ?? null
+    });
+
+  } catch (erro) {
+    return res.status(502).json({
+      sucesso: false,
+      erro: "Falha ao consultar produto de catalogo"
+    });
+  }
+});
+
+
+
 
 // ======================================
 // ROTA INEXISTENTE
