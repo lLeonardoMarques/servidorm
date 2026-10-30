@@ -841,6 +841,69 @@ app.get(
   }
 );
 
+
+﻿// ======================================
+// CONSULTAR ANUNCIOS DO VENDEDOR
+// ======================================
+
+app.get("/api/ml/meus-anuncios", exigirAdmin, async (req, res) => {
+  res.set("Cache-Control", "no-store");
+
+  try {
+    const token = await obterAccessToken();
+
+    const url = new URL(
+      "https://api.mercadolibre.com/users/136668760/items/search"
+    );
+
+    url.searchParams.set("limit", "10");
+
+    const resposta = await fetch(url.toString(), {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        Accept: "application/json"
+      },
+      signal: AbortSignal.timeout(15000)
+    });
+
+    const texto = await resposta.text();
+
+    let dados;
+
+    try {
+      dados = JSON.parse(texto);
+    } catch {
+      dados = {};
+    }
+
+    return res.status(resposta.status).json({
+      sucesso: resposta.ok,
+      endpoint: "Meus anuncios",
+      httpMercadoLivre: resposta.status,
+      total: dados.paging?.total ?? null,
+      anuncios: Array.isArray(dados.results)
+        ? dados.results.slice(0, 10)
+        : [],
+      erro: resposta.ok
+        ? null
+        : {
+            codigo: dados.error ?? null,
+            mensagem: dados.message ?? null
+          },
+      retryAfter: resposta.headers.get("retry-after")
+    });
+
+  } catch (erro) {
+    console.error("Erro ao consultar anuncios:", erro.name);
+
+    return res.status(502).json({
+      sucesso: false,
+      erro: "Falha na consulta de anuncios"
+    });
+  }
+});
+
+
 // ======================================
 // ROTA INEXISTENTE
 // ======================================
