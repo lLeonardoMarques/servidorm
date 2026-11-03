@@ -220,6 +220,84 @@ function registrarPainelAnprice(app) {
       });
     }
   });
+
+  // ---------------------------------------------------------
+  // Gateway das novas funcoes (inteligencia de mercado).
+  // Somente rotas desta lista sao encaminhadas; parametros sao
+  // filtrados por expressao regular antes de sair do servidor.
+  // ---------------------------------------------------------
+  const PARAM_OK = {
+    id: /^MLB\d{3,15}$/,
+    ids: /^(MLB\d{3,15})(,MLB\d{3,15}){1,3}$/,
+    categoria: /^MLB\d{1,12}$/,
+    produto: /^MLB\d{3,15}$/
+  };
+
+  async function encaminhar(req, res, destino, permitidos, opcoes = {}) {
+    try {
+      const porta = Number(process.env.PORT || 3000);
+      const url = new URL(`http://127.0.0.1:${porta}${destino}`);
+      for (const nome of permitidos) {
+        const v = req.query[nome];
+        if (typeof v === "string" && v !== "") {
+          if (!PARAM_OK[nome].test(v)) {
+            return res.status(400).json({ sucesso: false, erro: `Parâmetro inválido: ${nome}` });
+          }
+          url.searchParams.set(nome, v);
+        }
+      }
+      const credencial = Buffer.from(
+        `${process.env.ADMIN_USER}:${process.env.ADMIN_PASSWORD}`, "utf8"
+      ).toString("base64");
+      const resposta = await fetch(url, {
+        method: opcoes.metodo || "GET",
+        headers: {
+          Authorization: `Basic ${credencial}`,
+          Accept: "application/json",
+          ...(opcoes.corpo ? { "Content-Type": "application/json" } : {})
+        },
+        body: opcoes.corpo ? JSON.stringify(opcoes.corpo) : undefined,
+        signal: AbortSignal.timeout(120000)
+      });
+      const texto = await resposta.text();
+      if (texto.length > 3_000_000) {
+        return res.status(502).json({ sucesso: false, erro: "Resposta da API excedeu o limite" });
+      }
+      let dados;
+      try { dados = JSON.parse(texto); }
+      catch { dados = { sucesso: false, erro: "Resposta inesperada da API" }; }
+      return res.status(resposta.status).json(dados);
+    } catch (erro) {
+      console.error("AnPrice gateway:", destino, erro.name);
+      return res.status(502).json({ sucesso: false, erro: "Não foi possível consultar o servidor" });
+    }
+  }
+
+  app.get("/painel/api/produto", exigirSessao, (req, res) =>
+    encaminhar(req, res, "/api/ml/v2/produto", ["id", "categoria"]));
+  app.get("/painel/api/comparar", exigirSessao, (req, res) =>
+    encaminhar(req, res, "/api/ml/v2/comparar", ["ids", "categoria"]));
+  app.get("/painel/api/radar", exigirSessao, (req, res) =>
+    encaminhar(req, res, "/api/ml/v2/radar", ["categoria"]));
+  app.get("/painel/api/concorrencia", exigirSessao, (req, res) =>
+    encaminhar(req, res, "/api/ml/v2/concorrencia", []));
+  app.get("/painel/api/recursos", exigirSessao, (req, res) =>
+    encaminhar(req, res, "/api/ml/v2/recursos", ["produto"]));
+  app.get("/painel/api/comissoes", exigirSessao, (req, res) =>
+    encaminhar(req, res, "/api/ml/v2/comissoes", []));
+  app.post("/painel/api/comissoes", exigirSessao, (req, res) => {
+    if (!origemConfiavel(req)) {
+      return res.status(403).json({ erro: "Origem nao permitida" });
+    }
+    const b = req.body || {};
+    const corpo = {
+      chave: typeof b.chave === "string" ? b.chave.slice(0, 70) : "",
+      percentual: b.percentual === null ? null : Number(b.percentual),
+      rotulo: typeof b.rotulo === "string" ? b.rotulo.slice(0, 80) : null,
+      remover: b.remover === true
+    };
+    return encaminhar(req, res, "/api/ml/v2/comissoes", [], { metodo: "POST", corpo });
+  });
 }
 
 module.exports = { registrarPainelAnprice };

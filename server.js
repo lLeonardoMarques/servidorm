@@ -493,7 +493,7 @@ app.get("/", (_req, res) => {
   res.json({
     projeto: "Servidor M",
     sistema: "AnPrice",
-    versao: "2.0.0",
+    versao: "2.1.0",
     status: "online"
   });
 });
@@ -501,7 +501,7 @@ app.get("/", (_req, res) => {
 app.get("/api/status", (_req, res) => {
   res.json({
     servidor: "online",
-    versao: "2.0.0",
+    versao: "2.1.0",
     timestamp: new Date().toISOString()
   });
 });
@@ -1716,6 +1716,22 @@ registrarBuscaInteligente(app, {
   limiteValido
 });
 
+// ======================================
+// ANPRICE - INTELIGENCIA DE MERCADO
+// produto, ofertas, comparador, radar, concorrencia, comissoes
+// ======================================
+
+const { registrarInteligenciaMercado } =
+  require("./anprice-mercado");
+
+registrarInteligenciaMercado(app, {
+  mlGet,
+  exigirAdmin,
+  rotaSegura,
+  erroML,
+  conectarMongoDB
+});
+
 const { registrarPainelAnprice } =
   require("./anprice-painel");
 
@@ -1739,6 +1755,6 @@ app.use((_req, res) => {
 
 app.listen(PORT, "0.0.0.0", () => {
   console.log(
-    `Servidor M AnPrice 2.0.0 iniciado na porta ${PORT}`
+    `Servidor M AnPrice 2.1.0 iniciado na porta ${PORT}`
   );
 });
