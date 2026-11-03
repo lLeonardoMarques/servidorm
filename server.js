@@ -1670,6 +1670,15 @@ app.get(
   })
 );
 
+// ======================================
+// INTERFACE WEB ANPRICE
+// ======================================
+
+const { registrarPainelAnprice } =
+  require("./anprice-painel");
+
+registrarPainelAnprice(app);
+
 
 
 // ======================================
