@@ -1395,6 +1395,283 @@ app.get(
 );
 
 
+﻿// ======================================
+// ANPRICE - BUSCA INTELIGENTE DE PRODUTOS
+// ======================================
+
+app.get(
+  "/api/ml/busca-inteligente",
+  exigirAdmin,
+  rotaSegura(async (req, res) => {
+    res.set("Cache-Control", "no-store");
+
+    const q =
+      typeof req.query.q === "string"
+        ? req.query.q.trim()
+        : "";
+
+    const limite = limiteValido(
+      req.query.limite ?? "10",
+      20
+    );
+
+    if (q.length < 2 || q.length > 100) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: "Informe uma pesquisa entre 2 e 100 caracteres"
+      });
+    }
+
+    if (!limite) {
+      return res.status(400).json({
+        sucesso: false,
+        erro: "O limite deve estar entre 1 e 20"
+      });
+    }
+
+    // Normaliza palavras para comparar relevancia.
+    function normalizar(texto) {
+      return String(texto || "")
+        .normalize("NFD")
+        .replace(/[\u0300-\u036f]/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, " ")
+        .trim();
+    }
+
+    const palavras = normalizar(q)
+      .split(" ")
+      .filter(x => x.length > 1);
+
+    // 1. Descobrir o dominio do produto.
+    let dominios = [];
+    let erroClassificacao = null;
+
+    try {
+      const sugestao = await mlGet(
+        "/sites/MLB/domain_discovery/search",
+        { q, limit: 3 }
+      );
+
+      if (
+        sugestao.ok &&
+        Array.isArray(sugestao.dados)
+      ) {
+        dominios = [
+          ...new Set(
+            sugestao.dados
+              .map(x => x.domain_id)
+              .filter(Boolean)
+          )
+        ];
+      } else {
+        erroClassificacao = sugestao.status;
+      }
+    } catch {
+      erroClassificacao = "indisponivel";
+    }
+
+    // 2. Buscar candidatos no catalogo.
+    // Busca mais candidatos do que o usuario pediu,
+    // pois parte deles pode ser irrelevante.
+    const quantidadeCandidatos = Math.min(
+      40,
+      Math.max(20, limite * 3)
+    );
+
+    const busca = await mlGet(
+      "/products/search",
+      {
+        site_id: "MLB",
+        status: "active",
+        q,
+        limit: quantidadeCandidatos
+      }
+    );
+
+    if (!busca.ok) {
+      return erroML(
+        res,
+        busca,
+        "busca_inteligente_catalogo"
+      );
+    }
+
+    const candidatos = Array.isArray(
+      busca.dados.results
+    )
+      ? busca.dados.results
+      : [];
+
+    // Pontuacao textual para ordenar candidatos.
+    function pontuar(nome) {
+      const texto = normalizar(nome);
+
+      let pontos = 0;
+
+      for (const palavra of palavras) {
+        if (texto.split(" ").includes(palavra)) {
+          pontos += 3;
+        } else if (texto.includes(palavra)) {
+          pontos += 1;
+        }
+      }
+
+      if (texto.includes(normalizar(q))) {
+        pontos += 5;
+      }
+
+      return pontos;
+    }
+
+    const candidatosOrdenados = candidatos
+      .filter(x => x.id && x.name)
+      .map(x => ({
+        ...x,
+        pontuacao: pontuar(x.name)
+      }))
+      .filter(x => x.pontuacao > 0)
+      .sort((a, b) => b.pontuacao - a.pontuacao);
+
+    // 3. Consultar detalhes e imagens reais.
+    const produtos = [];
+    const problemas = [];
+
+    let consultasDetalhes = 0;
+    let interrompido429 = false;
+    let descartadosDominio = 0;
+
+    // Lotes pequenos evitam disparar muitas
+    // chamadas simultaneas.
+    for (
+      let inicio = 0;
+      inicio < candidatosOrdenados.length &&
+      produtos.length < limite;
+      inicio += 3
+    ) {
+      const lote = candidatosOrdenados.slice(
+        inicio,
+        inicio + 3
+      );
+
+      const resultados = await Promise.all(
+        lote.map(async candidato => {
+          try {
+            const r = await mlGet(
+              `/products/${candidato.id}`
+            );
+
+            return { candidato, resposta: r };
+          } catch (e) {
+            return {
+              candidato,
+              erro: e.name
+            };
+          }
+        })
+      );
+
+      consultasDetalhes += lote.length;
+
+      for (const resultado of resultados) {
+        if (produtos.length >= limite) break;
+
+        if (resultado.erro) {
+          problemas.push({
+            id: resultado.candidato.id,
+            motivo: resultado.erro
+          });
+          continue;
+        }
+
+        const r = resultado.resposta;
+
+        if (r.status === 429) {
+          interrompido429 = true;
+          problemas.push({
+            id: resultado.candidato.id,
+            httpMercadoLivre: 429,
+            retryAfter: r.retryAfter
+          });
+          continue;
+        }
+
+        if (!r.ok) {
+          problemas.push({
+            id: resultado.candidato.id,
+            httpMercadoLivre: r.status
+          });
+          continue;
+        }
+
+        const produto = resumoProduto(r.dados);
+
+        // Se a API reconheceu um dominio especifico,
+        // descarta resultados de outros dominios.
+        if (
+          dominios.length > 0 &&
+          !dominios.includes(produto.dominio)
+        ) {
+          descartadosDominio++;
+          continue;
+        }
+
+        produtos.push({
+          ...produto,
+          pontuacaoRelevancia:
+            resultado.candidato.pontuacao,
+          origem: "CATALOGO_MERCADO_LIVRE",
+          comissaoAfiliado: null,
+          elegibilidadeAfiliado: "nao_verificada"
+        });
+      }
+
+      if (interrompido429) break;
+    }
+
+    // 4. Resposta pronta para o frontend.
+    return res.json({
+      sucesso: true,
+      sistema: "AnPrice",
+      recurso: "Busca inteligente",
+
+      pesquisa: q,
+      site: "MLB",
+
+      classificacao: {
+        dominiosIdentificados: dominios,
+        erroClassificacao
+      },
+
+      totalCatalogo:
+        busca.dados.paging?.total ?? null,
+
+      candidatosAnalisados:
+        candidatosOrdenados.length,
+
+      consultasDetalhes,
+      descartadosDominio,
+
+      limiteSolicitado: limite,
+      totalRetornado: produtos.length,
+
+      resultadoParcial: interrompido429,
+
+      produtos,
+
+      diagnostico: {
+        problemas,
+        observacao:
+          "Resultados de catalogo nao garantem anuncio disponivel ou elegibilidade de afiliado"
+      },
+
+      consultadoEm: new Date().toISOString()
+    });
+  })
+);
+
+
+
 // ======================================
 // ROTA NAO ENCONTRADA
 // ======================================
