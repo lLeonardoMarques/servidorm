@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <meta name="description" content="AnPrice: busca inteligente de produtos e oportunidades de afiliação.">
+  <title>AnPrice — Descobrir produtos</title>
+  <link rel="stylesheet" href="/painel/assets/style.css">
+  <script src="/painel/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/painel" aria-label="AnPrice início">
+        <div class="logo-mark">A<span>↗</span></div>
+        <div><strong>AnPrice</strong><small>INTELIGÊNCIA DE MERCADO</small></div>
+      </a>
+      <div class="sidebar-group-label">EXPLORAR</div>
+      <nav aria-label="Navegação principal">
+        <a class="nav-link selected" href="/painel"><span>⌕</span> Descobrir produtos</a>
+        <a class="nav-link disabled" aria-disabled="true"><span>▤</span> Mais vendidos <em>Em breve</em></a>
+        <a class="nav-link disabled" aria-disabled="true"><span>◇</span> Comparador <em>Em breve</em></a>
+      </nav>
+      <div class="sidebar-tip">
+        <div class="tip-icon">✦</div>
+        <strong>Encontre seu próximo produto</strong>
+        <p>Pesquise por nome. Veja fotos reais do catálogo e identifique oportunidades para analisar.</p>
+      </div>
+      <div class="sidebar-bottom"><span class="status-dot"></span> Catálogo Mercado Livre <span class="beta">BETA</span></div>
+    </aside>
+
+    <div class="workspace">
+      <header class="topbar">
+        <div class="breadcrumbs">AnPrice <span>/</span> <b>Descobrir produtos</b></div>
+        <div class="topright"><span class="online"><span></span> Pesquisa conectada</span><button id="logoutButton" class="logout hidden" type="button">Sair</button></div>
+      </header>
+
+      <main>
+        <section class="hero">
+          <div class="hero-copy">
+            <div class="eyebrow"><span>✦</span> RADAR DE PRODUTOS</div>
+            <h1>Encontre produtos.<br><span>Descubra possibilidades.</span></h1>
+            <p>Pesquise o que você pensa em vender ou divulgar. O AnPrice organiza produtos reais do catálogo para você começar sua análise.</p>
+          </div>
+          <div class="hero-graphic" aria-hidden="true"><div class="float-card fc-one">⌕ <span>Pesquisa inteligente</span></div><div class="orbits"><div class="orbit one"></div><div class="orbit two"></div><div class="center-ball">A</div></div><div class="float-card fc-two">✓ <span>Fotos originais</span></div></div>
+        </section>
+
+        <section class="search-panel" aria-label="Pesquisar produtos">
+          <form id="searchForm" class="search-row">
+            <label class="search-control" for="searchInput"><span class="glass">⌕</span><input id="searchInput" name="q" type="search" minlength="2" maxlength="100" value="Samsung S23" placeholder="Ex.: Samsung S23, blusa feminina, perfume árabe" required autocomplete="off"></label>
+            <select id="limitSelect" aria-label="Quantidade de produtos"><option value="5">5 produtos</option><option value="10" selected>10 produtos</option><option value="20">20 produtos</option></select>
+            <button class="primary-button" id="searchButton" type="submit">Buscar produtos <span>→</span></button>
+          </form>
+          <div class="quick-search"><span>Buscas sugeridas</span><button type="button" data-search="Samsung S23">Samsung S23</button><button type="button" data-search="Blusa feminina">Blusa feminina</button><button type="button" data-search="Perfume árabe">Perfume árabe</button><button type="button" data-search="Fone bluetooth">Fone bluetooth</button></div>
+        </section>
+
+        <section class="stats" aria-label="Resumo da pesquisa">
+          <div class="stat"><div class="stat-head">PRODUTOS ENCONTRADOS <span>◈</span></div><strong id="statProducts">—</strong><small>Resultados selecionados do catálogo</small></div>
+          <div class="stat"><div class="stat-head">CATÁLOGO CONSULTADO <span>▤</span></div><strong id="statCatalog">—</strong><small>Total informado na pesquisa</small></div>
+          <div class="stat"><div class="stat-head">DOMÍNIOS DESCARTADOS <span>⊖</span></div><strong id="statDiscarded">—</strong><small>Resultados de outras categorias</small></div>
+          <div class="stat"><div class="stat-head">DADOS COMERCIAIS <span>◇</span></div><strong class="data-muted">Em análise</strong><small>Preço e comissão não confirmados</small></div>
+        </section>
+
+        <section class="results-section">
+          <div class="results-top"><div><div class="section-kicker">EXPLORAR OPORTUNIDADES</div><h2>Produtos encontrados <span id="queryEcho"></span></h2><p id="resultsSubtitle">Entre para pesquisar produtos reais do catálogo.</p></div><div class="results-actions"><label for="modelSelect">Refinar</label><select id="modelSelect"><option value="todos">Todos os modelos</option><option value="base">Somente S23</option><option value="plus">S23 Plus</option><option value="ultra">S23 Ultra</option><option value="fe">S23 FE</option><option value="exposicao">De exposição</option></select></div></div>
+          <div class="notice" role="note"><span class="notice-icon">i</span><span>Os produtos vêm do catálogo oficial. <strong>Preço, estoque, anúncio para afiliação e comissão ainda não são verificados.</strong> Estes cards não são recomendações de lucratividade.</span></div>
+          <div id="messageBox" class="message" role="status" aria-live="polite"><span class="message-symbol">⌕</span><strong>Pronto para pesquisar</strong><p>Entre no painel e busque o produto que deseja analisar.</p></div>
+          <div id="productGrid" class="product-grid" aria-live="polite"></div>
+        </section>
+        <footer><span>© AnPrice · Primeira versão conectada</span><span>Resultados de catálogo ≠ ofertas de afiliados</span></footer>
+      </main>
+    </div>
+  </div>
+
+  <div id="loginOverlay" class="login-overlay">
+    <div class="login-card">
+      <div class="login-icon">A<span>↗</span></div>
+      <div class="login-overline">ACESSO PRIVADO · ANPRICE BETA</div>
+      <h2>Bem-vindo de volta.</h2>
+      <p>Entre com suas credenciais administrativas para testar a pesquisa conectada. Elas não ficam salvas no navegador.</p>
+      <form id="loginForm">
+        <label for="loginUser">Usuário</label>
+        <input id="loginUser" type="text" autocomplete="username" required placeholder="Usuário administrativo">
+        <label for="loginPassword">Senha</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" required placeholder="Senha administrativa">
+        <p id="loginError" class="login-error hidden" role="alert"></p>
+        <button id="loginButton" class="primary-button login-submit" type="submit">Entrar no AnPrice →</button>
+      </form>
+      <small>Conexão HTTPS · Sessão protegida por cookie HttpOnly</small>
+    </div>
+  </div>
+</body>
+</html>
