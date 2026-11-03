@@ -59,16 +59,17 @@
           <div class="stat"><div class="stat-head">PRODUTOS ENCONTRADOS <span>◈</span></div><strong id="statProducts">—</strong><small>Resultados selecionados do catálogo</small></div>
           <div class="stat"><div class="stat-head">CATÁLOGO CONSULTADO <span>▤</span></div><strong id="statCatalog">—</strong><small>Total informado na pesquisa</small></div>
           <div class="stat"><div class="stat-head">DOMÍNIOS DESCARTADOS <span>⊖</span></div><strong id="statDiscarded">—</strong><small>Resultados de outras categorias</small></div>
-          <div class="stat"><div class="stat-head">DADOS COMERCIAIS <span>◇</span></div><strong class="data-muted">Em análise</strong><small>Preço e comissão não confirmados</small></div>
+          <div class="stat"><div class="stat-head">CONSULTAS À API <span>◇</span></div><strong id="statApi" class="data-muted">—</strong><small id="statApiInfo">Chamadas à API nesta busca</small></div>
         </section>
 
         <section class="results-section">
-          <div class="results-top"><div><div class="section-kicker">EXPLORAR OPORTUNIDADES</div><h2>Produtos encontrados <span id="queryEcho"></span></h2><p id="resultsSubtitle">Entre para pesquisar produtos reais do catálogo.</p></div><div class="results-actions"><label for="modelSelect">Refinar</label><select id="modelSelect"><option value="todos">Todos os modelos</option><option value="base">Somente S23</option><option value="plus">S23 Plus</option><option value="ultra">S23 Ultra</option><option value="fe">S23 FE</option><option value="exposicao">De exposição</option></select></div></div>
-          <div class="notice" role="note"><span class="notice-icon">i</span><span>Os produtos vêm do catálogo oficial. <strong>Preço, estoque, anúncio para afiliação e comissão ainda não são verificados.</strong> Estes cards não são recomendações de lucratividade.</span></div>
+          <div class="results-top"><div><div class="section-kicker">EXPLORAR OPORTUNIDADES</div><h2>Produtos encontrados <span id="queryEcho"></span></h2><p id="resultsSubtitle">Entre para pesquisar produtos reais do catálogo.</p></div><div class="results-actions"><a id="searchAllLink" class="search-all hidden" target="_blank" rel="noopener noreferrer">Pesquisar ofertas no Mercado Livre ↗</a></div></div>
+          <div id="refineBar" class="refine-bar hidden" aria-label="Refinar pesquisa"><span>Refinar por modelo</span><div id="refineChips" class="refine-chips"></div></div>
+          <div class="notice" role="note"><span class="notice-icon">i</span><span>Os produtos vêm do catálogo oficial. <strong>Preço, estoque, anúncio para afiliação e comissão ainda não são verificados.</strong> O botão “Pesquisar ofertas” abre a busca pública do Mercado Livre, não um anúncio nem link de afiliado. Estes cards não são recomendações de lucratividade.</span></div>
           <div id="messageBox" class="message" role="status" aria-live="polite"><span class="message-symbol">⌕</span><strong>Pronto para pesquisar</strong><p>Entre no painel e busque o produto que deseja analisar.</p></div>
           <div id="productGrid" class="product-grid" aria-live="polite"></div>
         </section>
-        <footer><span>© AnPrice · Primeira versão conectada</span><span>Resultados de catálogo ≠ ofertas de afiliados</span></footer>
+        <footer><span>© AnPrice · Busca Inteligente 2.0</span><span>Resultados de catálogo ≠ ofertas de afiliados</span></footer>
       </main>
     </div>
   </div>

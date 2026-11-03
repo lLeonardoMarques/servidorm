@@ -1395,12 +1395,12 @@ app.get(
 );
 
 
-﻿// ======================================
-// ANPRICE - BUSCA INTELIGENTE DE PRODUTOS
+// ======================================
+// ANPRICE - BUSCA INTELIGENTE DE PRODUTOS (V1)
 // ======================================
 
 app.get(
-  "/api/ml/busca-inteligente",
+  "/api/ml/busca-inteligente-v1",
   exigirAdmin,
   rotaSegura(async (req, res) => {
     res.set("Cache-Control", "no-store");
@@ -1698,6 +1698,23 @@ if (
 // ======================================
 // INTERFACE WEB ANPRICE
 // ======================================
+
+// ======================================
+// ANPRICE - BUSCA INTELIGENTE 2.0
+// A versao anterior continua em /api/ml/busca-inteligente-v1
+// ======================================
+
+const { registrarBuscaInteligente } =
+  require("./anprice-busca");
+
+registrarBuscaInteligente(app, {
+  mlGet,
+  exigirAdmin,
+  rotaSegura,
+  erroML,
+  resumoProduto,
+  limiteValido
+});
 
 const { registrarPainelAnprice } =
   require("./anprice-painel");

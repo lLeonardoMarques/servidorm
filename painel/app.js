@@ -50,14 +50,13 @@ function elemento(tag, classe, conteudo) {
   if (conteudo !== undefined) el.textContent = String(conteudo);
   return el;
 }
-function detectarModelo(nome) {
-  const t = String(nome || "").toLowerCase();
-  if (/\b(exposi[cç][aã]o|vitrine)\b/.test(t)) return "exposicao";
-  if (/\bs23\s*(ultra)\b/.test(t)) return "ultra";
-  if (/\bs23\s*(fe)\b/.test(t)) return "fe";
-  if (/\bs23\s*(plus|\+)\b/.test(t)) return "plus";
-  if (/\bs23\b/.test(t)) return "base";
-  return "outros";
+function urlMercadoLivre(valor) {
+  try {
+    const u = new URL(valor);
+    if (u.protocol !== "https:") return "";
+    if (!(u.hostname === "mercadolivre.com.br" || u.hostname.endsWith(".mercadolivre.com.br"))) return "";
+    return u.href;
+  } catch { return ""; }
 }
 function addCard(item) {
   const card = elemento("article", "product");
@@ -74,19 +73,55 @@ function addCard(item) {
     media.append(elemento("div", "product-placeholder", "▧"));
   }
   media.append(elemento("span", "product-label", "CATÁLOGO OFICIAL"));
+  if (item.posicaoRanking) {
+    media.append(elemento("span", "rank-badge", `#${item.posicaoRanking} mais vendidos`));
+  }
   card.append(media);
 
   const body = elemento("div", "product-body");
   body.append(elemento("div", "product-domain", String(item.dominio || "Produto").replace(/^MLB-/, "").replaceAll("_", " ")));
   body.append(elemento("h3", "", item.titulo || "Produto sem título"));
-  body.append(elemento("div", "product-id", `ID: ${item.id || "—"}`));
+
+  const attrs = Array.isArray(item.atributosPrincipais) ? item.atributosPrincipais : [];
+  if (attrs.length) {
+    const lista = elemento("div", "product-attrs");
+    for (const a of attrs) {
+      const chip = elemento("span", "attr-chip", a.valor);
+      chip.title = a.nome || "";
+      lista.append(chip);
+    }
+    body.append(lista);
+  }
+
+  const motivos = Array.isArray(item.motivos) ? item.motivos.slice(0, 3) : [];
+  const alertas = Array.isArray(item.alertas) ? item.alertas.slice(0, 2) : [];
+  if (motivos.length || alertas.length) {
+    const why = elemento("ul", "product-why");
+    for (const m of motivos) why.append(elemento("li", "why-ok", m));
+    for (const m of alertas) why.append(elemento("li", "why-warn", m));
+    body.append(why);
+  }
+
+  const meta = [`ID: ${item.id || "—"}`];
+  if (item.variantesAgrupadas > 1) meta.push(`${item.variantesAgrupadas} variantes agrupadas`);
+  body.append(elemento("div", "product-id", meta.join(" · ")));
   body.append(elemento("div", "product-divider"));
   const detail = elemento("div", "product-details");
-  detail.append(elemento("span", "PREÇO / COMISSÃO"));
-  detail.append(elemento("strong", "", "Não disponíveis"));
+  detail.append(elemento("span", "", "PREÇO / COMISSÃO"));
+  detail.append(elemento("strong", "", item.preco != null ? `R$ ${Number(item.preco).toLocaleString("pt-BR", { minimumFractionDigits: 2 })}` : "Não disponíveis"));
   body.append(detail);
 
   const footer = elemento("div", "product-footer");
+  const oferta = urlMercadoLivre(item.linkOferta || "");
+  const pesquisa = urlMercadoLivre(item.linkPesquisaOfertas || "");
+  if (oferta || pesquisa) {
+    const a = elemento("a", "offer-button", oferta ? "Ver oferta ↗" : "Pesquisar ofertas ↗");
+    a.href = oferta || pesquisa;
+    a.target = "_blank";
+    a.rel = "noopener noreferrer";
+    a.title = oferta ? "Anúncio retornado pela API" : "Abre a busca pública do Mercado Livre por este modelo";
+    footer.append(a);
+  }
   const copiar = elemento("button", "outline-button", "Copiar ID");
   copiar.type = "button";
   copiar.addEventListener("click", async () => {
@@ -109,22 +144,33 @@ function addCard(item) {
   card.append(body);
   return card;
 }
-function aplicarFiltros() {
-  const filtro = $("modelSelect").value;
-  const buscaS23 = /\bs23\b/i.test(state.pesquisa);
-  const filtrados = state.produtos.filter(p =>
-    filtro === "todos" || !buscaS23 || detectarModelo(p.titulo) === filtro
-  );
+function renderizar() {
   const grid = $("productGrid");
   grid.replaceChildren();
   $("messageBox").classList.add("hidden");
-  if (!filtrados.length) {
-    grid.append(elemento("div", "empty-result", "Nenhum produto corresponde a este filtro. Experimente 'Todos os modelos'."));
+  if (!state.produtos.length) {
+    grid.append(elemento("div", "empty-result", "Nenhum produto relevante encontrado. Experimente um refinamento ou um termo mais específico."));
     return;
   }
   const frag = document.createDocumentFragment();
-  for (const p of filtrados) frag.append(addCard(p));
+  for (const p of state.produtos) frag.append(addCard(p));
   grid.append(frag);
+}
+function renderizarRefinamentos(lista) {
+  const chips = $("refineChips");
+  chips.replaceChildren();
+  const itens = Array.isArray(lista) ? lista.slice(0, 10) : [];
+  $("refineBar").classList.toggle("hidden", itens.length === 0);
+  for (const r of itens) {
+    const b = elemento("button", "refine-chip", r.rotulo);
+    b.type = "button";
+    b.title = `Pesquisar: ${r.consulta}`;
+    b.addEventListener("click", () => {
+      $("searchInput").value = r.consulta;
+      pesquisar();
+    });
+    chips.append(b);
+  }
 }
 async function pesquisar() {
   if (!state.autenticado || state.carregando) return;
@@ -134,26 +180,36 @@ async function pesquisar() {
   state.carregando = true;
   $("searchButton").disabled = true;
   $("searchButton").textContent = "Pesquisando…";
-  $("statProducts").textContent = "—";
-  $("statCatalog").textContent = "—";
-  $("statDiscarded").textContent = "—";
+  for (const id of ["statProducts", "statCatalog", "statDiscarded", "statApi"]) $(id).textContent = "—";
   $("queryEcho").textContent = "";
-  mostrarMensagem("Buscando produtos reais…", "Analisando resultados e consultando as imagens do catálogo do Mercado Livre.", "◌");
+  $("refineBar").classList.add("hidden");
+  $("searchAllLink").classList.add("hidden");
+  mostrarMensagem("Buscando produtos reais…", "Explorando o catálogo, o ranking da categoria e os modelos relacionados.", "◌");
   try {
     const params = new URLSearchParams({ q, limite: String(limite) });
     const dados = await apiJson(`/painel/api/busca?${params.toString()}`);
     state.produtos = Array.isArray(dados.produtos) ? dados.produtos : [];
     state.pesquisa = q;
-    $("modelSelect").disabled = !/\bs23\b/i.test(q);
-    $("modelSelect").value = "todos";
     texto($("statProducts"), nf.format(state.produtos.length));
     texto($("statCatalog"), dados.totalCatalogo == null ? "—" : nf.format(dados.totalCatalogo));
     texto($("statDiscarded"), nf.format(dados.descartadosDominio ?? 0));
+    const consumo = dados.consumo || {};
+    texto($("statApi"), consumo.chamadasApi == null ? "—" : nf.format(consumo.chamadasApi));
+    texto($("statApiInfo"), consumo.respostasDoCache ? `${nf.format(consumo.respostasDoCache)} respostas vindas do cache` : "Chamadas à API nesta busca");
     texto($("queryEcho"), `· ${q}`);
-    texto($("resultsSubtitle"), `${state.produtos.length} produtos selecionados · Imagens originais quando disponíveis`);
-    aplicarFiltros();
+    const categoria = dados.classificacao?.nomeCategoria;
+    texto($("resultsSubtitle"), `${state.produtos.length} produtos selecionados${categoria ? ` · ${categoria}` : ""} · Imagens originais do catálogo`);
+    const linkGeral = urlMercadoLivre(dados.linkPesquisaOfertas || "");
+    if (linkGeral) {
+      $("searchAllLink").href = linkGeral;
+      $("searchAllLink").classList.remove("hidden");
+    }
+    renderizarRefinamentos(dados.refinamentos);
+    renderizar();
     if (dados.resultadoParcial) {
-      texto($("resultsSubtitle"), "Resultado parcial: limite de requisições do Mercado Livre atingido.");
+      texto($("resultsSubtitle"), "Resultado parcial: limite de requisições do Mercado Livre atingido. Tente novamente em instantes.");
+    } else if (dados.usouAlternativos) {
+      texto($("resultsSubtitle"), `${state.produtos.length} produtos com categoria não confirmada · confira os resultados`);
     }
   } catch (erro) {
     state.produtos = [];
@@ -200,7 +256,6 @@ $("logoutButton").addEventListener("click", async () => {
   autenticarVisual(false);
 });
 $("searchForm").addEventListener("submit", e => { e.preventDefault(); pesquisar(); });
-$("modelSelect").addEventListener("change", aplicarFiltros);
 for (const botao of document.querySelectorAll("[data-search]")) {
   botao.addEventListener("click", () => {
     $("searchInput").value = botao.dataset.search;

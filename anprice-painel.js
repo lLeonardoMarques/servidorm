@@ -189,6 +189,10 @@ function registrarPainelAnprice(app) {
       const url = new URL(`http://127.0.0.1:${porta}/api/ml/busca-inteligente`);
       url.searchParams.set("q", q);
       url.searchParams.set("limite", String(limite));
+      if (typeof req.query.dominio === "string" && /^MLB-[A-Z0-9_]{2,60}$/.test(req.query.dominio)) {
+        url.searchParams.set("dominio", req.query.dominio);
+      }
+      if (req.query.explorar === "0") url.searchParams.set("explorar", "0");
       const credencial = Buffer.from(
         `${process.env.ADMIN_USER}:${process.env.ADMIN_PASSWORD}`,
         "utf8"
