@@ -1536,6 +1536,7 @@ app.get(
     // 3. Consultar detalhes e imagens reais.
     const produtos = [];
     const problemas = [];
+    const produtosAlternativos = [];
 
     let consultasDetalhes = 0;
     let interrompido429 = false;
@@ -1609,12 +1610,24 @@ app.get(
         // Se a API reconheceu um dominio especifico,
         // descarta resultados de outros dominios.
         if (
-          dominios.length > 0 &&
-          !dominios.includes(produto.dominio)
-        ) {
-          descartadosDominio++;
-          continue;
-        }
+  dominios.length > 0 &&
+  !dominios.includes(produto.dominio)
+) {
+  descartadosDominio++;
+
+  // Conserva candidatos relevantes como alternativa,
+  // em vez de descarta-los definitivamente.
+  produtosAlternativos.push({
+    ...produto,
+    pontuacaoRelevancia: resultado.candidato.pontuacao,
+    origem: "CATALOGO_MERCADO_LIVRE",
+    correspondenciaDominio: "nao_confirmada",
+    comissaoAfiliado: null,
+    elegibilidadeAfiliado: "nao_verificada"
+  });
+
+  continue;
+}
 
         produtos.push({
           ...produto,
@@ -1628,6 +1641,18 @@ app.get(
 
       if (interrompido429) break;
     }
+
+    // Se nenhum produto passou pelo filtro de dominio,
+// aproveita os candidatos textualmente relevantes.
+// Nao inventa resultados.
+if (
+  produtos.length === 0 &&
+  produtosAlternativos.length > 0
+) {
+  produtos.push(
+    ...produtosAlternativos.slice(0, limite)
+  );
+}
 
     // 4. Resposta pronta para o frontend.
     return res.json({
